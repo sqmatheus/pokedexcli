@@ -1,53 +1,88 @@
 package cli
 
 import (
-	"bufio"
+	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
+
+	"github.com/peterh/liner"
 )
 
-var CommandMap map[string]Command = make(map[string]Command)
-
-func RegisterCommand(c Command) {
-	CommandMap[c.Name] = c
+type Cli struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	CommandMap map[string]Command
 }
 
-func executeCommand(input string) error {
+func NewCli() *Cli {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Cli{
+		ctx:        ctx,
+		cancel:     cancel,
+		CommandMap: make(map[string]Command),
+	}
+}
+
+func (c *Cli) RegisterCommand(cmd Command) {
+	c.CommandMap[cmd.Name] = cmd
+}
+
+func (c *Cli) executeCommand(input string) error {
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
 		return errors.New("provide a command! use 'help'")
 	}
 
-	cmd, exists := CommandMap[fields[0]]
+	cmd, exists := c.CommandMap[fields[0]]
 	if !exists {
 		return errors.New("invalid command! use 'help'")
 	}
 
-	if err := cmd.Callback(fields[1:]); err != nil {
+	if err := cmd.Callback(c, fields[1:]); err != nil {
 		return err
 	}
 	return nil
 }
 
-func Start() {
-	scanner := bufio.NewScanner(os.Stdin)
+func (c *Cli) Exit() {
+	c.cancel()
+}
+
+func (c *Cli) Start() {
+	line := liner.NewLiner()
+	defer line.Close()
+
+	line.SetCtrlCAborts(true)
+
+	line.SetCompleter(func(line string) (comp []string) {
+		for name := range c.CommandMap {
+			if strings.HasPrefix(name, strings.ToLower(line)) {
+				comp = append(comp, name)
+			}
+		}
+		return
+	})
 
 	for {
-		fmt.Print("pokedex > ")
-		scanner.Scan()
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+			cmd, err := line.Prompt("pokedex > ")
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				return
+			}
 
-		if scanner.Err() != nil {
-			fmt.Printf("scanner error: %v\n", scanner.Err())
-			break
-		}
-
-		input := strings.TrimSpace(scanner.Text())
-		err := executeCommand(input)
-		if err != nil {
-			fmt.Printf("error: %v\n", err)
+			input := strings.TrimSpace(cmd)
+			if input != "" {
+				line.AppendHistory(input)
+			}
+			err = c.executeCommand(input)
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+			}
 		}
 	}
-
 }

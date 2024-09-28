@@ -2,7 +2,7 @@ package cli
 
 import "fmt"
 
-type CommandCallback func([]string) error
+type CommandCallback func(*Cli, []string) error
 
 type Command struct {
 	Name        string
